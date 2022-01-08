@@ -3,7 +3,8 @@
     "name": "Samsung MDC Display",
     "version": "0.1.0",
     "config_flow": true,
-    "documentation": "https://www.home-assistant.io/integrations/samsungmdc",
+    "documentation": "https://github.com/matthijs2704/homeassistant-samsungmdc",
+    "issue_tracker": "https://github.com/matthijs2704/homeassistant-samsungmdc/issues",
     "requirements": [
         "python-samsung-mdc==1.9.1"
     ],
