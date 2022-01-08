@@ -80,6 +80,7 @@ SUPPORT_MDC = (
     | SUPPORT_VOLUME_STEP
 )
 
+# Map the input sources of the MDC protocol to names for Home Assistant 
 SOURCE_MAP = {
     INPUT_SOURCE.INPUT_SOURCE_STATE.NONE: SOURCE_NONE,
     INPUT_SOURCE.INPUT_SOURCE_STATE.S_VIDEO: SOURCE_S_VIDEO,
@@ -263,8 +264,8 @@ class SamsungMDCDisplay(MediaPlayerEntity):
             await self.mdc.close()
             return
         except MDCError:
+            _LOGGER.error("Error retrieving status info from display")
             self._available = False
-            _LOGGER.exception("Error retrieving status info from display")
             await self.mdc.close()
             return
 
@@ -291,7 +292,7 @@ class SamsungMDCDisplay(MediaPlayerEntity):
 
     async def async_execute_power(self, power):
         """Change the display power state."""
-        for _ in range(3):
+        for i in range(3):
             try:
                 await self.mdc.power(
                     self.display_id,
@@ -302,13 +303,19 @@ class SamsungMDCDisplay(MediaPlayerEntity):
             except NAKError:
                 # For power commands, need to retry sending the command 3 times
                 # every 2 seconds until ACK'd, otherwise failure
+                _LOGGER.info("MDC power command has not been ACK'd after try %d/3", i)
                 await asyncio.sleep(2)
                 continue
             except MDCResponseError:
                 # Samsung displays are weird when powering on and might raise an non-issue exception in the parser,
                 # Let's assume the display is now turning on and will not respond (correctly) for the following 15 seconds.
                 continue
-        raise MDCPowerNAKError("Power not ACK'd after 3 tries!")
+    
+        # If the power command is not ACK'd after 3 tries, it should be considered a failure.
+        # We'll set the display offline and retry with a fresh connection next time.
+        _LOGGER.error("MDC power command has not been ACK'd after 3 tries!")
+        self.available = False
+        self.mdc.close()
 
     async def async_turn_on(self, **kwargs):
         """Turn the display on."""
@@ -343,9 +350,3 @@ class SamsungMDCDisplay(MediaPlayerEntity):
         return await self.mdc.input_source(
             self.display_id, [list(SOURCE_MAP.keys())[position]]
         )
-
-
-class MDCPowerNAKError(Exception):
-    """Display power command has failed exception."""
-
-    pass
