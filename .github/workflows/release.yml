@@ -2,21 +2,15 @@ name: release
 
 on:
   push:
-    branches: [ main ]
-  pull_request:
-    branches: [ main ]
+    branches: [ main, dev ]
 
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v2
-      
-      # Validate the integration for use in HACS
-      - name: HACS validation
-        uses: "hacs/action@main"
         with:
-          category: "integration"
+          ref: ${{ github.ref }}
 
       - name: Gets semantic release info
         id: semantic_release_info
@@ -53,7 +47,7 @@ jobs:
           release_name: ${{ steps.semantic_release_info.outputs.git_tag }}
           body: ${{ steps.semantic_release_info.outputs.notes }}
           draft: false
-          prerelease: false
+          prerelease: ${{steps.semantic_release_info.outputs.channel == 'dev'}}
 
       - name: Archive Release
         if: ${{steps.semantic_release_info.outputs.version != ''}}
@@ -64,6 +58,7 @@ jobs:
           exclusions: '*.git*'
 
       - name: Upload Release
+        if: ${{steps.semantic_release_info.outputs.version != ''}}
         uses: actions/upload-release-asset@v1
         env:
           GITHUB_TOKEN: ${{ github.token }}
