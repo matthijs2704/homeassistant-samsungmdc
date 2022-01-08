@@ -9,7 +9,6 @@ from .const import DOMAIN
 # For your initial PR, limit it to 1 platform.
 PLATFORMS = ["media_player"]
 
-
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Samsung MDC from a config entry."""
     # TODO Store an API object for your platforms to access
