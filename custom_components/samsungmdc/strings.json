@@ -5,7 +5,7 @@
             "user": {
                 "description": "Enter your Samsung TV information. If you never connected Home Assistant before you should see a popup on your TV asking for authorization.",
                 "data": {
-                    "host": "[%key:common::config_flow::data::host%]",
+                    "ip_address": "[%key:common::config_flow::data::ip%]",
                     "name": "[%key:common::config_flow::data::name%]",
                     "display_id": "Display ID"
                 }
@@ -13,6 +13,11 @@
             "confirm": {
                 "description": "[%key:common::config_flow::description::confirm_setup%]"
             }
+        },
+        "error": {
+            "invalid_ip": "Invalid IP address",
+            "invalid_displayid": "Invalid display ID",
+            "cannot_connect": "[%key:common::config_flow::error::cannot_connect%]"
         },
         "abort": {
             "unknown": "Unknown error occurred",

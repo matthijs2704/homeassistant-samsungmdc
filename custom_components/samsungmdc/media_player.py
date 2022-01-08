@@ -23,7 +23,7 @@ from homeassistant.components.media_player.const import (
     SUPPORT_VOLUME_STEP,
 )
 from homeassistant.const import (
-    CONF_HOST,
+    CONF_IP_ADDRESS,
     CONF_NAME,
     CONF_TYPE,
     CONF_UNIQUE_ID,
@@ -127,7 +127,7 @@ async def async_setup_entry(
     model_type = config[CONF_TYPE]
     display_id = config[CONF_DISPLAY_ID]
 
-    mdc = MDC(config[CONF_HOST])
+    mdc = MDC(config[CONF_IP_ADDRESS])
     media_player = SamsungMDCDisplay(mdc, name, serial, model_type, display_id)
 
     async_add_entities([media_player], update_before_add=True)
