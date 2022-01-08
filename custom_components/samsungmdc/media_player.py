@@ -269,6 +269,9 @@ class SamsungMDCDisplay(MediaPlayerEntity):
             await self.mdc.close()
             return
 
+        # We have received status data, so that must mean we are online!
+        self._available = True
+
         (power_state, volume_level, mute_state, input_state, _, _, _) = status
 
         if power_state == POWER.POWER_STATE.ON:
