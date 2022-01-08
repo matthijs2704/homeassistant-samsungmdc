@@ -48,7 +48,8 @@ jobs:
           node-version: 16
       - run: npm install @semantic-release/exec -D
       - run: npm install @semantic-release/git -D
-      - name: Release
+
+      - name: Do semantic release
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: npx semantic-release
