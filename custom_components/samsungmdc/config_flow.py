@@ -16,7 +16,7 @@ from .const import CONF_DISPLAY_ID, DEFAULT_DISPLAY_ID, DEFAULT_NAME, DOMAIN, RE
 
 async def test_connection(host: str, display_id: int) -> Tuple[str, str]:
     """Test the connection to a display and receive its serial."""
-    async with MDC(host, verbose=True) as mdc:
+    async with MDC(host, verbose=False) as mdc:
         (serial_number,) = await mdc.serial_number(display_id)
         (model,) = await mdc.model_name(display_id)
         return (serial_number, model)
