@@ -11,7 +11,6 @@ jobs:
       - uses: actions/checkout@v2
         with:
           fetch-depth: 0
-          ref: ${{ github.ref }}
 
       - name: Gets semantic release info
         id: semantic_release_info
@@ -19,7 +18,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
 
-      - name: Update package.json version
+      - name: Update manifest.json version
         if: ${{steps.semantic_release_info.outputs.version != ''}}
         uses: jossef/action-set-json-field@v1
         with:
@@ -30,19 +29,29 @@ jobs:
       - name: Update Version and Commit   
         if: ${{steps.semantic_release_info.outputs.version != ''}}
         run: |
-          echo "Version: ${{steps.semantic_release_info.outputs.version}}"
           git config --local user.name 'github-actions[bot]'
           git config --local user.email 'github-actions[bot]@users.noreply.github.com'
           git add -A
           git commit -m "chore: bumping version to ${{steps.semantic_release_info.outputs.version}}"
-          git tag ${{ steps.semantic_release_info.outputs.git_tag }}
-          
+        
       - name: Push changes
         if: ${{steps.semantic_release_info.outputs.version != ''}}
         uses: ad-m/github-push-action@v0.6.0
         with:
           github_token: ${{ github.token }}
           tags: true
+          branch: ${{github.ref}}
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v1
+        with:
+          node-version: 12
+      - run: npm install @semantic-release/exec -D
+      - run: npm install @semantic-release/git -D
+      - name: Release
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: npx semantic-release
 
       - name: Create GitHub Release
         id: create_release
