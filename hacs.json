@@ -1,6 +1,6 @@
 {
-  "name": "Test integration",
-  "persistent_directory": "keep",
-  "zip_release": true,
-  "filename": "test.zip"
+    "name": "Samsung MDC Display integration",
+    "persistent_directory": "keep",
+    "zip_release": true,
+    "filename": "samsungmdc.zip"
 }
