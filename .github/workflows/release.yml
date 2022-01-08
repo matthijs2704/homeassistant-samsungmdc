@@ -57,22 +57,3 @@ jobs:
           body: ${{ steps.semantic_release_info.outputs.notes }}
           draft: false
           prerelease: ${{steps.semantic_release_info.outputs.channel == 'dev'}}
-
-      - name: Archive Release
-        if: ${{steps.semantic_release_info.outputs.version != ''}}
-        uses: thedoctor0/zip-release@master
-        with:
-          type: 'zip'
-          filename: 'samsungmdc.zip'
-          exclusions: '*.git*'
-
-      - name: Upload Release
-        if: ${{steps.semantic_release_info.outputs.version != ''}}
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-        with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: samsungmdc.zip
-          asset_name: samsungmdc.zip
-          asset_content_type: application/zip
