@@ -10,6 +10,7 @@ jobs:
     steps:
       - uses: actions/checkout@v2
         with:
+          fetch-depth: 0
           ref: ${{ github.ref }}
 
       - name: Gets semantic release info
@@ -18,11 +19,18 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
 
+      - name: Update package.json version
+        if: ${{steps.semantic_release_info.outputs.version != ''}}
+        uses: jossef/action-set-json-field@v1
+        with:
+          file: custom_components/samsungmdc/manifest.json
+          field: version
+          value: ${{ steps.semantic_release_info.outputs.git_tag }}
+
       - name: Update Version and Commit   
         if: ${{steps.semantic_release_info.outputs.version != ''}}
         run: |
           echo "Version: ${{steps.semantic_release_info.outputs.version}}"
-          sed -i "s/\"version\": \".*\",/\"version\": \"${{steps.semantic_release_info.outputs.version}}\",/g" custom_components/samsungmdc/manifest.json
           git config --local user.name 'github-actions[bot]'
           git config --local user.email 'github-actions[bot]@users.noreply.github.com'
           git add -A
