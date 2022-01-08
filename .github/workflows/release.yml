@@ -14,55 +14,50 @@ jobs:
 
       - name: Gets semantic release info
         id: semantic_release_info
-        uses: jossef/action-semantic-release-info@v1
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
+        uses: go-semantic-release/action@v1
+        with:
+          github-token: ${{ github.token }}
+          prerelease: ${{github.ref != 'refs/heads/main'}}
+          dry: true
 
-      - name: Update manifest.json version
+      - name: Updates manifest.json version
         if: ${{steps.semantic_release_info.outputs.version != ''}}
         uses: jossef/action-set-json-field@v1
         with:
           file: custom_components/samsungmdc/manifest.json
           field: version
-          value: ${{ steps.semantic_release_info.outputs.git_tag }}
+          value: ${{ steps.semantic_release_info.outputs.version }}
 
-      - name: Update Version and Commit   
+      - name: Updates Version and Commits 
         if: ${{steps.semantic_release_info.outputs.version != ''}}
         run: |
+          echo "Version: ${{steps.semantic_release_info.outputs.version}}"
           git config --local user.name 'github-actions[bot]'
           git config --local user.email 'github-actions[bot]@users.noreply.github.com'
           git add -A
           git commit -m "chore: bumping version to ${{steps.semantic_release_info.outputs.version}}"
-        
+          
       - name: Push changes
         if: ${{steps.semantic_release_info.outputs.version != ''}}
         uses: ad-m/github-push-action@v0.6.0
         with:
           github_token: ${{ github.token }}
-          tags: true
-          branch: ${{github.ref}}
-      
-      - name: Setup Node.js
-        uses: actions/setup-node@v1
-        with:
-          node-version: 16
-      - run: npm install @semantic-release/exec -D
-      - run: npm install @semantic-release/git -D
+          branch: ${{ github.ref }}
 
-      - name: Do semantic release
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-        run: npx semantic-release
-
-      - name: Create GitHub Release
-        id: create_release
-        if: ${{steps.semantic_release_info.outputs.version != ''}}
-        uses: actions/create-release@v1
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
+      - uses: go-semantic-release/action@v1
         with:
-          tag_name: ${{ steps.semantic_release_info.outputs.git_tag }}
-          release_name: ${{ steps.semantic_release_info.outputs.git_tag }}
-          body: ${{ steps.semantic_release_info.outputs.notes }}
-          draft: false
-          prerelease: ${{steps.semantic_release_info.outputs.channel == 'dev'}}
+          github-token: ${{ github.token }}
+          prerelease: ${{github.ref != 'refs/heads/main'}}
+
+      # - name: Create GitHub Release
+      #   id: create_release
+      #   if: ${{steps.semantic_release_info.outputs.version != ''}}
+      #   uses: actions/create-release@v1
+      #   env:
+      #     GITHUB_TOKEN: ${{ github.token }}
+      #   with:
+      #     tag_name: ${{ steps.semantic_release_info.outputs.git_tag }}
+      #     release_name: ${{ steps.semantic_release_info.outputs.git_tag }}
+      #     body: ${{ steps.semantic_release_info.outputs.notes }}
+      #     draft: false
+      #     prerelease: ${{steps.semantic_release_info.outputs.channel == 'dev'}}
