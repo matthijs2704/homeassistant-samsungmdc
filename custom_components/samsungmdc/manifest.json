@@ -1,0 +1,20 @@
+{
+    "domain": "samsungmdc",
+    "name": "Samsung MDC Display",
+    "version": "0.1.0",
+    "config_flow": true,
+    "documentation": "https://www.home-assistant.io/integrations/samsungmdc",
+    "requirements": [
+        "python-samsung-mdc==1.9.1"
+    ],
+    "ssdp": [],
+    "zeroconf": [],
+    "homekit": {},
+    "dependencies": [
+        "media_player"
+    ],
+    "codeowners": [
+        "@matthijs2704"
+    ],
+    "iot_class": "local_polling"
+}

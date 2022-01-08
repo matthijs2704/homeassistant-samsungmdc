@@ -1,3 +1,5 @@
-# integration-hacs
+# Samsung MDC Display integration
 
-_Sample integration repository for [HACS](https://github.com/custom-components/hacs)._
+Samsung MDC Display integration for [HACS](https://github.com/custom-components/hacs).
+
+

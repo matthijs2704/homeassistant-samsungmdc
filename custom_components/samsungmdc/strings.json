@@ -1,0 +1,23 @@
+{
+    "config": {
+        "flow_title": "{device}",
+        "step": {
+            "user": {
+                "description": "Enter your Samsung TV information. If you never connected Home Assistant before you should see a popup on your TV asking for authorization.",
+                "data": {
+                    "host": "[%key:common::config_flow::data::host%]",
+                    "name": "[%key:common::config_flow::data::name%]",
+                    "display_id": "Display ID"
+                }
+            },
+            "confirm": {
+                "description": "[%key:common::config_flow::description::confirm_setup%]"
+            }
+        },
+        "abort": {
+            "unknown": "Unknown error occurred",
+            "cannot_connect": "Unable to connect to the MDC display",
+            "already_configured": "This MDC Display is already configured"
+        }
+    }
+}
