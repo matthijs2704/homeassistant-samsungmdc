@@ -251,10 +251,12 @@ class SamsungMDCDisplay(MediaPlayerEntity):
         try:
             status = await self.mdc.status(self.display_id)
             await self.async_update_sw_version()
-        except MDCResponseError as exc:
+        except ValueError:
             # Some unknown value is passed to the MDC library, ignore
             # Possibly switching sources which gives undefined POWER and SOURCE state
-            _LOGGER.error("Unknown status received from display", exc_info=exc)
+            return
+        except MDCResponseError:
+            _LOGGER.warning("MDC response parsing error. Resetting connection.")
             await self.mdc.close()
             return
         except NAKError:
