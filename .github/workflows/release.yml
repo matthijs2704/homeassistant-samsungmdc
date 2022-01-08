@@ -30,7 +30,7 @@ jobs:
           echo "Version: ${{steps.semantic_release_info.outputs.version}}"
           sed -i "s/\"version\": \".*\",/\"version\": \"${{steps.semantic_release_info.outputs.version}}\",/g" custom_components/samsungmdc/manifest.json 
           git config --local user.email "action@github.com"
-          git config --local user.name "GitHub Action"
+          git config --local user.name "github-actions[bot]"
           git add -A
           git commit -m "chore: bumping version to ${{steps.semantic_release_info.outputs.version}}"
           git tag ${{ steps.semantic_release_info.outputs.git_tag }}
@@ -41,6 +41,7 @@ jobs:
         with:
           github_token: ${{ github.token }}
           tags: true
+          branch: ${{ github.ref }}
 
       - name: Create GitHub Release
         if: ${{steps.semantic_release_info.outputs.version != ''}}
