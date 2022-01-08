@@ -229,6 +229,7 @@ class SamsungMDCDisplay(MediaPlayerEntity):
         """If the state is currently assumed or not."""
         if self._is_awaiting_power_on:
             return True
+            
         return False
 
     async def async_update_sw_version(self):
