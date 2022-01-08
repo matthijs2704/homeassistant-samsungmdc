@@ -1,6 +1,10 @@
 {
     "name": "Samsung MDC Display integration",
     "persistent_directory": "keep",
+    "country": "NL",
+    "domains": [
+        "media_player"
+    ],
     "zip_release": true,
     "filename": "samsungmdc.zip"
 }

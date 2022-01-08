@@ -28,9 +28,7 @@ jobs:
         if: ${{steps.semantic_release_info.outputs.version != ''}}
         run: |
           echo "Version: ${{steps.semantic_release_info.outputs.version}}"
-          sed -i "s/\"version\": \".*\",/\"version\": \"${{steps.semantic_release_info.outputs.version}}\",/g" custom_components/samsungmdc/manifest.json 
-          git config --local user.email "action@github.com"
-          git config --local user.name "github-actions[bot]"
+          sed -i "s/\"version\": \".*\",/\"version\": \"${{steps.semantic_release_info.outputs.version}}\",/g" custom_components/samsungmdc/manifest.json
           git add -A
           git commit -m "chore: bumping version to ${{steps.semantic_release_info.outputs.version}}"
           git tag ${{ steps.semantic_release_info.outputs.git_tag }}
@@ -54,3 +52,21 @@ jobs:
           body: ${{ steps.semantic_release_info.outputs.notes }}
           draft: false
           prerelease: false
+
+      - name: Archive Release
+        if: ${{steps.semantic_release_info.outputs.version != ''}}
+        uses: thedoctor0/zip-release@master
+        with:
+          type: 'zip'
+          filename: 'samsungmdc.zip'
+          exclusions: '*.git*'
+
+      - name: Upload Release
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: samsungmdc.zip
+          asset_name: samsungmdc.zip
+          asset_content_type: application/zip
