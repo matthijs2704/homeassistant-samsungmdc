@@ -66,6 +66,7 @@ from .const import (
     SOURCE_TV_DTV,
     SOURCE_URL_LAUNCHER,
     SOURCE_WIDI_SCREEN_MIRRORING,
+    SOURCE_WEB_BROWSER,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -112,6 +113,7 @@ SOURCE_MAP = {
     INPUT_SOURCE.INPUT_SOURCE_STATE.INTERNAL_USB: SOURCE_INTERNAL_USB,
     INPUT_SOURCE.INPUT_SOURCE_STATE.URL_LAUNCHER: SOURCE_URL_LAUNCHER,
     INPUT_SOURCE.INPUT_SOURCE_STATE.IWB: SOURCE_IWB,
+    INPUT_SOURCE.INPUT_SOURCE_STATE.WEB_BROWSER: SOURCE_WEB_BROWSER,
 }
 
 
@@ -211,6 +213,8 @@ class SamsungMDCDisplay(MediaPlayerEntity):
         """Return the name of the active input source."""
         if self._input_source is None:
             return None
+        _LOGGER.debug("source map: %s, trying to look up key %s",SOURCE_MAP,self._input_source)
+        
         return SOURCE_MAP[self._input_source]
 
     @property
@@ -229,7 +233,6 @@ class SamsungMDCDisplay(MediaPlayerEntity):
         """If the state is currently assumed or not."""
         if self._is_awaiting_power_on:
             return True
-            
         return False
 
     async def async_update_sw_version(self):
@@ -239,7 +242,8 @@ class SamsungMDCDisplay(MediaPlayerEntity):
             try:
                 self._sw_version = await self.mdc.software_version(self.display_id)
             except NAKError:
-                # Display in a state where it can not report the SW version (possibly powering on)
+                # Display in a state where it can not report the SW version (possibly powering on),
+                # or the display does not support the version command (such as the Flip Pro 4)
                 pass
 
     async def async_update(self):
@@ -250,7 +254,16 @@ class SamsungMDCDisplay(MediaPlayerEntity):
             return
 
         try:
-            status = await self.mdc.status(self.display_id)
+            #status = await self.mdc.status(self.display_id)
+            # not all displays support the status command, so we get the data by individual calls instead
+            (_,power_state,*_) = await self.mdc.power(self.display_id)
+            _LOGGER.debug("power_state: %s",power_state)
+            (volume_level,*_) = await self.mdc.volume(self.display_id)
+            _LOGGER.debug("volume_level: %s",volume_level)
+            (_,mute_state,*_) = await self.mdc.mute(self.display_id)
+            _LOGGER.debug("mute_state: %s",mute_state)
+            (_,input_state,*_) = await self.mdc.input_source(self.display_id)
+            _LOGGER.debug("input_state: %s",input_state)
             await self.async_update_sw_version()
         except ValueError:
             # Some unknown value is passed to the MDC library, ignore
@@ -261,7 +274,7 @@ class SamsungMDCDisplay(MediaPlayerEntity):
             await self.mdc.close()
             return
         except NAKError:
-            _LOGGER.error("Received NAK from display for status command")
+            _LOGGER.warning("Received NAK from display for status command")
             self._available = False
             await self.mdc.close()
             return
@@ -274,7 +287,7 @@ class SamsungMDCDisplay(MediaPlayerEntity):
         # We have received status data, so that must mean we are online!
         self._available = True
 
-        (power_state, volume_level, mute_state, input_state, _, _, _) = status
+        #(power_state, volume_level, mute_state, input_state, _, _, _) = status
 
         if power_state == POWER.POWER_STATE.ON:
             self._power = True
