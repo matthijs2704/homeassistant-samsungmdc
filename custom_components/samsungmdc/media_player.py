@@ -66,6 +66,7 @@ from .const import (
     SOURCE_TV_DTV,
     SOURCE_URL_LAUNCHER,
     SOURCE_WIDI_SCREEN_MIRRORING,
+    SOURCE_WEB_BROWSER,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -112,6 +113,7 @@ SOURCE_MAP = {
     INPUT_SOURCE.INPUT_SOURCE_STATE.INTERNAL_USB: SOURCE_INTERNAL_USB,
     INPUT_SOURCE.INPUT_SOURCE_STATE.URL_LAUNCHER: SOURCE_URL_LAUNCHER,
     INPUT_SOURCE.INPUT_SOURCE_STATE.IWB: SOURCE_IWB,
+    INPUT_SOURCE.INPUT_SOURCE_STATE.WEB_BROWSER: SOURCE_WEB_BROWSER,
 }
 
 
@@ -229,7 +231,6 @@ class SamsungMDCDisplay(MediaPlayerEntity):
         """If the state is currently assumed or not."""
         if self._is_awaiting_power_on:
             return True
-            
         return False
 
     async def async_update_sw_version(self):
@@ -239,20 +240,47 @@ class SamsungMDCDisplay(MediaPlayerEntity):
             try:
                 self._sw_version = await self.mdc.software_version(self.display_id)
             except NAKError:
-                # Display in a state where it can not report the SW version (possibly powering on)
+                # Display in a state where it can not report the SW version (possibly powering on),
+                # or the display does not support the version command (such as the Flip Pro 4)
                 pass
 
     async def async_update(self):
         """Update the state of the MDC display."""
+        _LOGGER.debug("async_update beginning, power is %s",self._power)
         if self._is_awaiting_power_on:
-            # Display is still turning on
+            _LOGGER.debug("Display is still turning on")
             # Samsung describes a 15 second wait before reconnecting...
             return
 
         try:
-            status = await self.mdc.status(self.display_id)
-            await self.async_update_sw_version()
-        except ValueError:
+            #status = await self.mdc.status(self.display_id)
+            # not all displays support the status command, so we get the data by individual calls instead
+            power_state = (await self.mdc.power(self.display_id))[0]
+            _LOGGER.debug("power_state: %s",power_state)
+            if power_state == POWER.POWER_STATE.ON:     # other calls work only if power is on
+                self._power = True
+        
+                volume_level = (await self.mdc.volume(self.display_id))[0]
+                _LOGGER.debug("volume_level: %s",volume_level)
+                self._volume = volume_level
+        
+                mute_state = (await self.mdc.mute(self.display_id))[0]
+                _LOGGER.debug("mute_state: %s",mute_state)
+                if mute_state == MUTE.MUTE_STATE.ON:
+                    self._muted = True
+                else:
+                    self._muted = False
+
+                input_state = (await self.mdc.input_source(self.display_id))[0]
+                _LOGGER.debug("input_state: %s",input_state)
+                self._input_source = input_state
+            elif power_state == POWER.POWER_STATE.OFF:
+                self._power = False
+            elif power_state == POWER.POWER_STATE.REBOOT:
+                self._power = False
+            #await self.async_update_sw_version()
+        except ValueError as e:
+            _LOGGER.warning("value error %s, cannot interpret.",str(e), exc_info=True)
             # Some unknown value is passed to the MDC library, ignore
             # Possibly switching sources which gives undefined POWER and SOURCE state
             return
@@ -261,7 +289,7 @@ class SamsungMDCDisplay(MediaPlayerEntity):
             await self.mdc.close()
             return
         except NAKError:
-            _LOGGER.error("Received NAK from display for status command")
+            _LOGGER.warning("Received NAK from display for a status command")
             self._available = False
             await self.mdc.close()
             return
@@ -274,29 +302,13 @@ class SamsungMDCDisplay(MediaPlayerEntity):
         # We have received status data, so that must mean we are online!
         self._available = True
 
-        (power_state, volume_level, mute_state, input_state, _, _, _) = status
-
-        if power_state == POWER.POWER_STATE.ON:
-            self._power = True
-        elif power_state == POWER.POWER_STATE.OFF:
-            self._power = False
-        elif power_state == POWER.POWER_STATE.REBOOT:
-            self._power = False
-
-        self._volume = volume_level
-
-        if mute_state == MUTE.MUTE_STATE.ON:
-            self._muted = True
-        else:
-            self._muted = False
-
-        self._input_source = input_state
-
         # Update additional information
         await self.async_update_sw_version()
+        _LOGGER.debug("async_update end, power is %s, source is %s",self._power,self._input_source)
+
 
     async def async_execute_power(self, power):
-        """Change the display power state."""
+        _LOGGER.debug("Change the display power state to %s",power)
         for i in range(3):
             try:
                 await self.mdc.power(
@@ -304,6 +316,7 @@ class SamsungMDCDisplay(MediaPlayerEntity):
                     [POWER.POWER_STATE.ON if power else POWER.POWER_STATE.OFF],
                 )
                 # Power command ACK'd, so successful!
+                _LOGGER.debug("success")
                 return
             except NAKError:
                 # For power commands, need to retry sending the command 3 times
@@ -314,6 +327,7 @@ class SamsungMDCDisplay(MediaPlayerEntity):
             except MDCResponseError:
                 # Samsung displays are weird when powering on and might raise an non-issue exception in the parser,
                 # Let's assume the display is now turning on and will not respond (correctly) for the following 15 seconds.
+                _LOGGER.debug("received response error on power change try # %i, ignoring for now",i)
                 continue
     
         # If the power command is not ACK'd after 3 tries, it should be considered a failure.
@@ -323,7 +337,7 @@ class SamsungMDCDisplay(MediaPlayerEntity):
         self.mdc.close()
 
     async def async_turn_on(self, **kwargs):
-        """Turn the display on."""
+        _LOGGER.debug("Request to turn the display on, current state is %s",self._power)
         if not self._power:
             self._is_awaiting_power_on = True
             self._power = True
@@ -331,10 +345,15 @@ class SamsungMDCDisplay(MediaPlayerEntity):
             await self.mdc.close()  # Force reconnect on next command
             await asyncio.sleep(15)  # Wait 15 seconds to boot, as described by Samsung
             self._is_awaiting_power_on = False
+            _LOGGER.debug("Successfully turned power on, power state is now %s and is_awaiting_power_on flag is %s",self._power,self._is_awaiting_power_on)
 
     async def async_turn_off(self, **kwargs):
-        """Turn the display off."""
-        return await self.async_execute_power(False)
+        _LOGGER.debug("Request to turn the display off, current state is %s",self._power)
+        if self._power:
+            self._power = False
+            await self.async_execute_power(False)
+            await self.mdc.close()  # Force reconnect on next command
+            _LOGGER.debug("Successfully turned power off, power state is now %s",self._power)
 
     async def async_mute_volume(self, mute):
         """Set the mute state of the display."""

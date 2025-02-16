@@ -1,9 +1,14 @@
 """Config flow for Samsung MDC."""
 import ipaddress
 from typing import Tuple
+import uuid
 
 from samsung_mdc import MDC
-from samsung_mdc.exceptions import MDCTimeoutError
+from samsung_mdc.exceptions import (
+    MDCTimeoutError,
+    MDCResponseError,
+    NAKError,
+)
 
 import voluptuous as vol
 from voluptuous.schema_builder import message
@@ -15,10 +20,17 @@ from homeassistant.const import CONF_IP_ADDRESS, CONF_NAME, CONF_TYPE, CONF_UNIQ
 from .const import CONF_DISPLAY_ID, DEFAULT_DISPLAY_ID, DEFAULT_NAME, DOMAIN, RESULT_CANNOT_CONNECT, RESULT_INV_DSPID, RESULT_INV_IP
 
 async def test_connection(host: str, display_id: int) -> Tuple[str, str]:
-    """Test the connection to a display and receive its serial."""
+    """Test the connection to a display and receive its serial (or a UUID for displays such as the Flip Pro 4)."""
     async with MDC(host, verbose=False) as mdc:
-        (serial_number,) = await mdc.serial_number(display_id)
-        (model,) = await mdc.model_name(display_id)
+        try:
+            (serial_number,) = await mdc.serial_number(display_id)
+            (model,) = await mdc.model_name(display_id)
+        except NAKError:
+            # We get a NAKError only if the connection works as such
+            # But for example the Flip Pro only answers to power, volume, mute, input source and some undocumented smartview+ get/set,
+            # so in case no serial is returned, create a fake as UUID and set the model to "generic"
+            serial_number = str(uuid.uuid4())  # Generate a UUID instead
+            model = "generic"
         return (serial_number, model)
 
 def is_valid_ip(ip: str):
