@@ -12,14 +12,12 @@ from samsung_mdc.exceptions import (
 )
 
 from homeassistant import config_entries
-from homeassistant.components.media_player import DEVICE_CLASS_TV, MediaPlayerEntity
+from homeassistant.components.media_player import (
+    MediaPlayerEntity,
+    MediaPlayerDeviceClass,
+)
 from homeassistant.components.media_player.const import (
-    SUPPORT_SELECT_SOURCE,
-    SUPPORT_TURN_OFF,
-    SUPPORT_TURN_ON,
-    SUPPORT_VOLUME_MUTE,
-    SUPPORT_VOLUME_SET,
-    SUPPORT_VOLUME_STEP,
+    MediaPlayerEntityFeature,
 )
 from homeassistant.const import (
     CONF_IP_ADDRESS,
@@ -71,15 +69,15 @@ from .const import (
 _LOGGER = logging.getLogger(__name__)
 
 SUPPORT_MDC = (
-    SUPPORT_SELECT_SOURCE
-    | SUPPORT_VOLUME_SET
-    | SUPPORT_VOLUME_MUTE
-    | SUPPORT_TURN_OFF
-    | SUPPORT_TURN_ON
-    | SUPPORT_VOLUME_STEP
+    MediaPlayerEntityFeature.SELECT_SOURCE
+    | MediaPlayerEntityFeature.VOLUME_SET
+    | MediaPlayerEntityFeature.VOLUME_MUTE
+    | MediaPlayerEntityFeature.TURN_OFF
+    | MediaPlayerEntityFeature.TURN_ON
+    | MediaPlayerEntityFeature.VOLUME_STEP
 )
 
-# Map the input sources of the MDC protocol to names for Home Assistant 
+# Map the input sources of the MDC protocol to names for Home Assistant
 SOURCE_MAP = {
     INPUT_SOURCE.INPUT_SOURCE_STATE.NONE: SOURCE_NONE,
     INPUT_SOURCE.INPUT_SOURCE_STATE.S_VIDEO: SOURCE_S_VIDEO,
@@ -136,7 +134,7 @@ async def async_setup_entry(
 class SamsungMDCDisplay(MediaPlayerEntity):
     """Samsung MDC screen represented as a media_player."""
 
-    _attr_device_class = DEVICE_CLASS_TV
+    _attr_device_class = MediaPlayerDeviceClass.TV
     _attr_icon = "mdi:television"
 
     def __init__(
@@ -229,7 +227,7 @@ class SamsungMDCDisplay(MediaPlayerEntity):
         """If the state is currently assumed or not."""
         if self._is_awaiting_power_on:
             return True
-            
+
         return False
 
     async def async_update_sw_version(self):
@@ -315,7 +313,7 @@ class SamsungMDCDisplay(MediaPlayerEntity):
                 # Samsung displays are weird when powering on and might raise an non-issue exception in the parser,
                 # Let's assume the display is now turning on and will not respond (correctly) for the following 15 seconds.
                 continue
-    
+
         # If the power command is not ACK'd after 3 tries, it should be considered a failure.
         # We'll set the display offline and retry with a fresh connection next time.
         _LOGGER.error("MDC power command has not been ACK'd after 3 tries!")
