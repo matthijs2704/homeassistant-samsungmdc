@@ -1,4 +1,5 @@
 """The Samsung MDC integration."""
+
 from __future__ import annotations
 
 from homeassistant.config_entries import ConfigEntry
@@ -8,6 +9,7 @@ from .const import DOMAIN
 
 # For your initial PR, limit it to 1 platform.
 PLATFORMS = ["media_player"]
+
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Samsung MDC from a config entry."""
@@ -20,7 +22,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     # Forward the setup to the sensor platform.
     hass.async_create_task(
-        hass.config_entries.async_forward_entry_setup(entry, "media_player")
+        hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     )
     return True
 

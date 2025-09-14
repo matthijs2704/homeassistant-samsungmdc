@@ -1,4 +1,5 @@
 """Config flow for Samsung MDC."""
+
 import ipaddress
 from typing import Tuple
 
@@ -12,7 +13,16 @@ from voluptuous.error import Invalid
 from homeassistant import config_entries, exceptions
 from homeassistant.const import CONF_IP_ADDRESS, CONF_NAME, CONF_TYPE, CONF_UNIQUE_ID
 
-from .const import CONF_DISPLAY_ID, DEFAULT_DISPLAY_ID, DEFAULT_NAME, DOMAIN, RESULT_CANNOT_CONNECT, RESULT_INV_DSPID, RESULT_INV_IP
+from .const import (
+    CONF_DISPLAY_ID,
+    DEFAULT_DISPLAY_ID,
+    DEFAULT_NAME,
+    DOMAIN,
+    RESULT_CANNOT_CONNECT,
+    RESULT_INV_DSPID,
+    RESULT_INV_IP,
+)
+
 
 async def test_connection(host: str, display_id: int) -> Tuple[str, str]:
     """Test the connection to a display and receive its serial."""
@@ -21,6 +31,7 @@ async def test_connection(host: str, display_id: int) -> Tuple[str, str]:
         (model,) = await mdc.model_name(display_id)
         return (serial_number, model)
 
+
 def is_valid_ip(ip: str):
     """Return True if IP address is valid."""
     try:
@@ -28,6 +39,7 @@ def is_valid_ip(ip: str):
             return True
     except ValueError:
         return False
+
 
 class SamsungMDCConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Config flow for Samsung MDC display entities."""
@@ -73,7 +85,7 @@ class SamsungMDCConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                         },
                     )
                 except (MDCTimeoutError, ConnectionRefusedError, OSError) as exc:
-                    self._errors["base"] = RESULT_CANNOT_CONNECT                
+                    self._errors["base"] = RESULT_CANNOT_CONNECT
 
         data_schema = vol.Schema(
             {
@@ -83,4 +95,6 @@ class SamsungMDCConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             }
         )
 
-        return self.async_show_form(step_id="user", data_schema=data_schema, errors=self._errors)
+        return self.async_show_form(
+            step_id="user", data_schema=data_schema, errors=self._errors
+        )
