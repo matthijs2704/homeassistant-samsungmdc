@@ -12,7 +12,7 @@ PLATFORMS = [
     # Platform.BINARY_SENSOR,
     # Platform.SWITCH,
     # Platform.SELECT,
-    # Platform.NUMBER,
+    Platform.NUMBER,
     # Platform.TEXT,
 ]
 

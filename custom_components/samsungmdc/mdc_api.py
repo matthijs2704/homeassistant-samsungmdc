@@ -142,11 +142,20 @@ class MdcApi:
         if power:
             await self.async_refresh_static_info(timeout=timeout)
 
+        brightness, *_ = (
+            await self._call(
+                lambda: client.manual_lamp(self._display_id), timeout=timeout
+            )
+            if power
+            else (None,)
+        )
+
         return {
             "power": power,
             "input": input_source,
             "volume": volume,
             "muted": muted,
+            "brightness": brightness,
             "model": self._model or "Unknown",
             "sw_version": self._sw_version or "Unknown",
         }
