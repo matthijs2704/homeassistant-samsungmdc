@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import time
 
 from samsung_mdc import MDC
 from samsung_mdc.commands import INPUT_SOURCE, MUTE, POWER
@@ -68,10 +69,12 @@ from .const import (
 
 _LOGGER = logging.getLogger(__name__)
 
-# Connection retry settings
+# Connection retry settings (per Samsung MDC documentation)
 MAX_RETRY_ATTEMPTS = 3
-RETRY_DELAY = 2
-POWER_ON_WAIT_TIME = 15
+RETRY_DELAY = 2                    # Samsung spec: retry every 2 seconds
+POWER_ON_SOCKET_RECONNECT_TIME = 10  # Samsung spec: must re-connect socket after 10 sec for power on
+POWER_ON_CHECK_INTERVAL = 3  # Check every 3 seconds after socket reconnect
+MAX_POWER_ON_CHECKS = 10     # Try for up to 30 more seconds (10 * 3)
 
 SUPPORT_MDC = (
     MediaPlayerEntityFeature.SELECT_SOURCE
@@ -160,6 +163,8 @@ class SamsungMDCDisplay(MediaPlayerEntity):
         self._input_source = None
         self._available = True
         self._sw_version = None
+        self._last_failed_update = 0  # Track when we last failed to connect
+        self._reconnect_delay = 30     # Start with 30 second delay between reconnection attempts
 
     @property
     def device_info(self):
@@ -267,6 +272,15 @@ class SamsungMDCDisplay(MediaPlayerEntity):
             # Samsung describes a 15 second wait before reconnecting...
             return
 
+        # If device is unavailable, check if we should try to reconnect
+        if not self._available:
+            current_time = time.time()
+            if current_time - self._last_failed_update < self._reconnect_delay:
+                # Not time to retry yet
+                return
+
+            _LOGGER.info("Attempting to reconnect to display after %d seconds...", self._reconnect_delay)
+
         try:
             status = await self.mdc.status(self.display_id)
             await self.async_update_sw_version()
@@ -282,6 +296,7 @@ class SamsungMDCDisplay(MediaPlayerEntity):
             _LOGGER.error("Received NAK from display for status command")
             self._available = False
             await self.mdc.close()
+            self._last_failed_update = time.time()
             return
         except (
             MDCTimeoutError,
@@ -292,9 +307,15 @@ class SamsungMDCDisplay(MediaPlayerEntity):
         ) as e:
             error_type = type(e).__name__
             await self._handle_connection_error(f"Connection error during status update: {error_type}: {str(e)}")
+            self._last_failed_update = time.time()
+            # Gradually increase reconnect delay up to a maximum of 5 minutes
+            self._reconnect_delay = min(300, self._reconnect_delay * 1.5)
             return
 
         # We have received status data, so that must mean we are online!
+        if not self._available:
+            _LOGGER.info("Display reconnected successfully!")
+            self._reconnect_delay = 30  # Reset reconnect delay on successful connection
         self._available = True
 
         (power_state, volume_level, mute_state, input_state, _, _, _) = status
@@ -370,6 +391,76 @@ class SamsungMDCDisplay(MediaPlayerEntity):
         if last_exception:
             raise last_exception
 
+    async def _wait_for_power_on_recovery(self):
+        """Wait for display to become responsive after power on with periodic checks."""
+        _LOGGER.info("Display powered on, waiting %d seconds before checking status...", POWER_ON_SOCKET_RECONNECT_TIME)
+        await asyncio.sleep(POWER_ON_SOCKET_RECONNECT_TIME)
+
+        # Now try to establish connection with periodic retries
+        for attempt in range(MAX_POWER_ON_CHECKS):
+            try:
+                _LOGGER.debug("Power-on recovery check %d/%d", attempt + 1, MAX_POWER_ON_CHECKS)
+                status = await self.mdc.status(self.display_id)
+
+                # If we got here, the display is responsive!
+                _LOGGER.info("Display is now responsive after power-on")
+                self._available = True
+
+                # Update state based on the status we just received
+                (power_state, volume_level, mute_state, input_state, _, _, _) = status
+
+                if power_state == POWER.POWER_STATE.ON:
+                    self._power = True
+                elif power_state == POWER.POWER_STATE.OFF:
+                    self._power = False
+                elif power_state == POWER.POWER_STATE.REBOOT:
+                    self._power = False
+
+                self._volume = volume_level
+
+                if mute_state == MUTE.MUTE_STATE.ON:
+                    self._muted = True
+                else:
+                    self._muted = False
+
+                self._input_source = input_state
+
+                # Try to get software version too
+                await self.async_update_sw_version()
+                return True
+
+            except (
+                ConnectionResetError,
+                ConnectionAbortedError,
+                ConnectionRefusedError,
+                OSError,
+                MDCTimeoutError,
+                NAKError,
+                MDCResponseError,
+                ValueError
+            ) as e:
+                error_type = type(e).__name__
+                _LOGGER.debug("Power-on recovery attempt %d/%d failed: %s",
+                            attempt + 1, MAX_POWER_ON_CHECKS, error_type)
+
+                # Close connection before retry
+                try:
+                    await self.mdc.close()
+                except Exception:
+                    pass
+
+                if attempt < MAX_POWER_ON_CHECKS - 1:
+                    await asyncio.sleep(POWER_ON_CHECK_INTERVAL)
+                    continue
+                else:
+                    # All recovery attempts failed
+                    _LOGGER.warning("Display did not become responsive after power-on within %d seconds",
+                                  POWER_ON_SOCKET_RECONNECT_TIME + (MAX_POWER_ON_CHECKS * POWER_ON_CHECK_INTERVAL))
+                    self._available = False
+                    return False
+
+        return False
+
     async def async_execute_power(self, power):
         """Change the display power state."""
         power_state = POWER.POWER_STATE.ON if power else POWER.POWER_STATE.OFF
@@ -424,11 +515,25 @@ class SamsungMDCDisplay(MediaPlayerEntity):
         """Turn the display on."""
         if not self._power:
             self._is_awaiting_power_on = True
-            self._power = True
-            await self.async_execute_power(True)
-            await self.mdc.close()  # Force reconnect on next command
-            await asyncio.sleep(POWER_ON_WAIT_TIME)  # Wait 15 seconds to boot, as described by Samsung
-            self._is_awaiting_power_on = False
+            self._power = True  # Assume it will turn on
+
+            try:
+                await self.async_execute_power(True)
+                await self.mdc.close()  # Force reconnect on next command
+
+                # Wait for display to become responsive with periodic checks
+                recovery_successful = await self._wait_for_power_on_recovery()
+
+                if not recovery_successful:
+                    # Reset power state if recovery failed
+                    self._power = False
+
+            except Exception as e:
+                _LOGGER.error("Error during power-on sequence: %s", str(e))
+                self._power = False
+                self._available = False
+            finally:
+                self._is_awaiting_power_on = False
 
     async def async_turn_off(self, **kwargs):
         """Turn the display off."""
