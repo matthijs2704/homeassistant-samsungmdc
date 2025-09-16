@@ -68,6 +68,11 @@ from .const import (
 
 _LOGGER = logging.getLogger(__name__)
 
+# Connection retry settings
+MAX_RETRY_ATTEMPTS = 3
+RETRY_DELAY = 2
+POWER_ON_WAIT_TIME = 15
+
 SUPPORT_MDC = (
     MediaPlayerEntityFeature.SELECT_SOURCE
     | MediaPlayerEntityFeature.VOLUME_SET
@@ -230,6 +235,11 @@ class SamsungMDCDisplay(MediaPlayerEntity):
 
         return False
 
+    @property
+    def available(self) -> bool:
+        """Return True if entity is available."""
+        return self._available
+
     async def async_update_sw_version(self):
         """Retrieve the software version of the display."""
         # Only update the SW version if the display is turned on, otherwise it will NAK
@@ -238,6 +248,16 @@ class SamsungMDCDisplay(MediaPlayerEntity):
                 self._sw_version = await self.mdc.software_version(self.display_id)
             except NAKError:
                 # Display in a state where it can not report the SW version (possibly powering on)
+                pass
+            except (
+                ConnectionResetError,
+                ConnectionAbortedError,
+                ConnectionRefusedError,
+                OSError,
+                MDCTimeoutError
+            ) as e:
+                _LOGGER.debug("Connection error getting SW version: %s", str(e))
+                # Don't mark as unavailable for SW version errors, it's not critical
                 pass
 
     async def async_update(self):
@@ -263,10 +283,15 @@ class SamsungMDCDisplay(MediaPlayerEntity):
             self._available = False
             await self.mdc.close()
             return
-        except (MDCTimeoutError, ConnectionAbortedError, ConnectionRefusedError):
-            _LOGGER.error("Connection error to Samsung MDC display!")
-            self._available = False
-            await self.mdc.close()
+        except (
+            MDCTimeoutError,
+            ConnectionAbortedError,
+            ConnectionRefusedError,
+            ConnectionResetError,
+            OSError
+        ) as e:
+            error_type = type(e).__name__
+            await self._handle_connection_error(f"Connection error during status update: {error_type}: {str(e)}")
             return
 
         # We have received status data, so that must mean we are online!
@@ -293,32 +318,107 @@ class SamsungMDCDisplay(MediaPlayerEntity):
         # Update additional information
         await self.async_update_sw_version()
 
+    async def _handle_connection_error(self, error_msg: str):
+        """Handle connection errors by marking device unavailable and closing connection."""
+        _LOGGER.error("%s", error_msg)
+        self._available = False
+        try:
+            await self.mdc.close()
+        except Exception as e:
+            _LOGGER.debug("Error closing MDC connection: %s", e)
+
+    async def _execute_with_retry(self, command_func, *args, **kwargs):
+        """Execute an MDC command with retry logic for connection errors."""
+        last_exception = None
+
+        for attempt in range(MAX_RETRY_ATTEMPTS):
+            try:
+                return await command_func(*args, **kwargs)
+            except (
+                ConnectionResetError,
+                ConnectionAbortedError,
+                ConnectionRefusedError,
+                OSError,
+                MDCTimeoutError
+            ) as e:
+                last_exception = e
+                error_type = type(e).__name__
+                _LOGGER.warning(
+                    "Connection error (%s) on attempt %d/%d: %s",
+                    error_type, attempt + 1, MAX_RETRY_ATTEMPTS, str(e)
+                )
+
+                if attempt < MAX_RETRY_ATTEMPTS - 1:
+                    # Close connection and wait before retry
+                    try:
+                        await self.mdc.close()
+                    except Exception:
+                        pass
+                    await asyncio.sleep(RETRY_DELAY)
+                    continue
+                else:
+                    # Final attempt failed
+                    await self._handle_connection_error(
+                        f"Failed to execute command after {MAX_RETRY_ATTEMPTS} attempts. Last error: {error_type}: {str(e)}"
+                    )
+                    raise
+            except (NAKError, MDCResponseError, ValueError) as e:
+                # These are protocol-level errors that shouldn't be retried
+                raise
+
+        # This should never be reached, but just in case
+        if last_exception:
+            raise last_exception
+
     async def async_execute_power(self, power):
         """Change the display power state."""
-        for i in range(3):
+        power_state = POWER.POWER_STATE.ON if power else POWER.POWER_STATE.OFF
+
+        for i in range(MAX_RETRY_ATTEMPTS):
             try:
-                await self.mdc.power(
-                    self.display_id,
-                    [POWER.POWER_STATE.ON if power else POWER.POWER_STATE.OFF],
-                )
+                await self.mdc.power(self.display_id, [power_state])
                 # Power command ACK'd, so successful!
                 return
             except NAKError:
                 # For power commands, need to retry sending the command 3 times
                 # every 2 seconds until ACK'd, otherwise failure
-                _LOGGER.info("MDC power command has not been ACK'd after try %d/3", i)
-                await asyncio.sleep(2)
-                continue
+                _LOGGER.info("MDC power command has not been ACK'd after try %d/%d", i + 1, MAX_RETRY_ATTEMPTS)
+                if i < MAX_RETRY_ATTEMPTS - 1:
+                    await asyncio.sleep(RETRY_DELAY)
+                    continue
             except MDCResponseError:
                 # Samsung displays are weird when powering on and might raise an non-issue exception in the parser,
                 # Let's assume the display is now turning on and will not respond (correctly) for the following 15 seconds.
-                continue
+                return
+            except (
+                ConnectionResetError,
+                ConnectionAbortedError,
+                ConnectionRefusedError,
+                OSError,
+                MDCTimeoutError
+            ) as e:
+                error_type = type(e).__name__
+                _LOGGER.warning("Connection error during power command attempt %d/%d: %s: %s",
+                              i + 1, MAX_RETRY_ATTEMPTS, error_type, str(e))
+                if i < MAX_RETRY_ATTEMPTS - 1:
+                    try:
+                        await self.mdc.close()
+                    except Exception:
+                        pass
+                    await asyncio.sleep(RETRY_DELAY)
+                    continue
+                else:
+                    await self._handle_connection_error(f"Power command failed after {MAX_RETRY_ATTEMPTS} attempts")
+                    return
 
         # If the power command is not ACK'd after 3 tries, it should be considered a failure.
         # We'll set the display offline and retry with a fresh connection next time.
-        _LOGGER.error("MDC power command has not been ACK'd after 3 tries!")
-        self.available = False
-        self.mdc.close()
+        _LOGGER.error("MDC power command has not been ACK'd after %d tries!", MAX_RETRY_ATTEMPTS)
+        self._available = False
+        try:
+            await self.mdc.close()
+        except Exception:
+            pass
 
     async def async_turn_on(self, **kwargs):
         """Turn the display on."""
@@ -327,7 +427,7 @@ class SamsungMDCDisplay(MediaPlayerEntity):
             self._power = True
             await self.async_execute_power(True)
             await self.mdc.close()  # Force reconnect on next command
-            await asyncio.sleep(15)  # Wait 15 seconds to boot, as described by Samsung
+            await asyncio.sleep(POWER_ON_WAIT_TIME)  # Wait 15 seconds to boot, as described by Samsung
             self._is_awaiting_power_on = False
 
     async def async_turn_off(self, **kwargs):
@@ -336,20 +436,41 @@ class SamsungMDCDisplay(MediaPlayerEntity):
 
     async def async_mute_volume(self, mute):
         """Set the mute state of the display."""
-        return await self.mdc.mute(
-            self.display_id,
-            [MUTE.MUTE_STATE.ON if mute else MUTE.MUTE_STATE.OFF],
-        )
+        try:
+            return await self._execute_with_retry(
+                self.mdc.mute,
+                self.display_id,
+                [MUTE.MUTE_STATE.ON if mute else MUTE.MUTE_STATE.OFF],
+            )
+        except Exception as e:
+            _LOGGER.error("Failed to set mute state: %s", str(e))
+            raise
 
     async def async_set_volume_level(self, volume):
         """Set the volume level of the display."""
         vol_pct = round(volume * 100)
-        return await self.mdc.volume(self.display_id, [vol_pct])
+        try:
+            return await self._execute_with_retry(
+                self.mdc.volume,
+                self.display_id,
+                [vol_pct]
+            )
+        except Exception as e:
+            _LOGGER.error("Failed to set volume level: %s", str(e))
+            raise
 
     async def async_select_source(self, source):
         """Set the input source of the display."""
-
-        position = self.source_list.index(source)
-        return await self.mdc.input_source(
-            self.display_id, [list(SOURCE_MAP.keys())[position]]
-        )
+        try:
+            position = self.source_list.index(source)
+            return await self._execute_with_retry(
+                self.mdc.input_source,
+                self.display_id,
+                [list(SOURCE_MAP.keys())[position]]
+            )
+        except ValueError as e:
+            _LOGGER.error("Invalid source '%s': %s", source, str(e))
+            raise
+        except Exception as e:
+            _LOGGER.error("Failed to select source: %s", str(e))
+            raise
