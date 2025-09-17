@@ -194,7 +194,10 @@ class MDCUpdateCoordinator(DataUpdateCoordinator[dict]):
                     "Communication error during power transition - assuming display is still transitioning"
                 )
                 return prev_data
-
+            await self.api.async_close()  # Force reconnect on next command
+            raise UpdateFailed(f"Failed to communicate with display: {err}") from err
+        except (MDCResponseError, NAKError) as err:
+            await self.api.async_close()  # Force reconnect on next command
             raise UpdateFailed(f"Failed to communicate with display: {err}") from err
 
     async def async_execute(
