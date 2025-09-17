@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import contextlib
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
@@ -29,7 +30,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     try:
         await api.async_connect()
     except Exception as err:
-        await api.async_close()
+        with contextlib.suppress(Exception):
+            await api.async_close()
         raise ConfigEntryNotReady(
             f"Cannot connect to Samsung MDC display: {err}"
         ) from err

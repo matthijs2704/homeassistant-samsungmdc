@@ -6,6 +6,7 @@ from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.helpers.update_coordinator import UpdateFailed
 import socket
 import asyncio
+import contextlib
 
 from samsung_mdc import MDC
 from samsung_mdc.exceptions import (
@@ -76,9 +77,14 @@ class MdcApi:
         async with self._connect_lock:
             if self._connected:
                 return
-            async with async_timeout_ctx(timeout):
-                await self._client.open()
-            self._connected = True
+            try:
+                async with async_timeout_ctx(timeout):
+                    await self._client.open()
+                self._connected = True
+            except RETRYABLE_ERRORS as err:
+                raise ConfigEntryNotReady(
+                    f"Failed to connect to MDC display: {err}"
+                ) from err
 
     async def _ensure_client(self) -> MDC:
         await self.async_connect()
@@ -87,12 +93,9 @@ class MdcApi:
     async def async_close(self) -> None:
         """Close the MDC client connection."""
         async with self._connect_lock:
-            try:
-                await self._client.close()
-            except (OSError, TimeoutError) as err:
-                _LOGGER.debug("Error closing MDC client: %s", err)
-            finally:
-                self._connected = False
+            with contextlib.suppress(Exception):
+                await self.async_close()
+            self._connected = False
 
     async def _call(
         self, op: Callable[[], Awaitable[Any]], *, timeout: float = 10.0
@@ -102,10 +105,9 @@ class MdcApi:
             try:
                 async with async_timeout_ctx(timeout):
                     return await op()
-            except NAKError as err:
-                raise UpdateFailed(f"MDC NAK error: {err}") from err
-            except MDCReadTimeoutError as err:
-                raise UpdateFailed(f"MDC read timeout: {err}") from err
+            except NAKError:
+                # NAK received; do not close connection
+                raise
             except RETRYABLE_ERRORS:
                 # transport likely broken; close so the next call re-opens
                 await self.async_close()
@@ -114,13 +116,11 @@ class MdcApi:
     async def async_refresh_static_info(self, *, timeout: float = 10.0) -> None:
         """Try to refresh model/SW version (only works when panel is ON)."""
         client = await self._ensure_client()
-        try:
-            model = await self._call(
-                lambda: client.model_name(self._display_id), timeout=timeout
-            )
-            self._model = model
-        except Exception as e:
-            _LOGGER.debug("Model not available (likely panel off): %s", e)
+        model = await self._call(
+            lambda: client.model_name(self._display_id), timeout=timeout
+        )
+        self._model = model
+
         try:
             sw = await self._call(
                 lambda: client.software_version(self._display_id), timeout=timeout
