@@ -94,7 +94,7 @@ class MdcApi:
         """Close the MDC client connection."""
         async with self._connect_lock:
             with contextlib.suppress(Exception):
-                await self.async_close()
+                await self._client.close()
             self._connected = False
 
     async def _call(

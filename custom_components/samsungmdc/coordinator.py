@@ -113,6 +113,7 @@ class MDCUpdateCoordinator(DataUpdateCoordinator[dict]):
         except TimeoutError:
             _LOGGER.warning("Power transition timeout after %s seconds", timeout)
             self._clear_power_command()  # Clear on timeout
+            await self.api.async_close()  # Force reconnect on next command
             return False
         else:
             return True
@@ -195,7 +196,15 @@ class MDCUpdateCoordinator(DataUpdateCoordinator[dict]):
                 )
                 return prev_data
 
-            await self.api.async_close()  # Force reconnect on next command
+            # Force connection cleanup on persistent errors
+            await self.api.async_close()
+
+            # If we have previous data and it's a temporary network issue, be lenient
+            if prev_data and hasattr(err, '__class__') and err.__class__.__name__ in ['OSError', 'TimeoutError']:
+                _LOGGER.warning(
+                    "Temporary network error, using cached data: %s", err
+                )
+                return prev_data
             raise UpdateFailed(f"Failed to communicate with display: {err}") from err
         except (MDCResponseError, NAKError) as err:
             raise UpdateFailed(f"Failed to communicate with display: {err}") from err
@@ -259,6 +268,7 @@ class MDCUpdateCoordinator(DataUpdateCoordinator[dict]):
                 data = await self._retry_with_backoff(self.api.async_status)
             except RETRYABLE_ERRORS:
                 # still warming up; short wait and retry
+                await self.api.async_close()  # Force reconnect
                 await asyncio.sleep(POWER_ON_CHECK_INTERVAL)
             else:
                 _LOGGER.debug(
@@ -270,6 +280,8 @@ class MDCUpdateCoordinator(DataUpdateCoordinator[dict]):
                 self.async_set_updated_data(data)
                 return
         _LOGGER.warning("Display not responsive after power-on warm-up")
+        self._clear_power_command()  # Clear power command tracking
+        await self.api.async_close()  # Force reconnect
 
     async def async_power_on(self) -> None:
         """Send POWER ON with Samsung's NAK/connection retry rules, then warm-up checks."""
@@ -293,9 +305,11 @@ class MDCUpdateCoordinator(DataUpdateCoordinator[dict]):
                 await self._send_power_command(POWER.POWER_STATE.OFF)
                 await asyncio.sleep(1)  # brief pause before checking status
                 await self.async_request_refresh()
-            except RETRYABLE_ERRORS:
-                _LOGGER.error("Power-off failed after retries")
-                raise
-            except Exception:
-                self._clear_power_command()
+            except RETRYABLE_ERRORS as err:
+                _LOGGER.error("Power-off failed after retries: %s", err)
+                self._clear_power_command()  # Clear on failure
+                raise UpdateFailed(f"Power-off failed: {err}") from err
+            except Exception as err:
+                _LOGGER.error("Unexpected error during power-off: %s", err)
+                self._clear_power_command()  # Clear on any failure
                 raise
