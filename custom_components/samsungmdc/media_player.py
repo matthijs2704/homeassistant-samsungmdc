@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import time
 
 from samsung_mdc import MDC
 from samsung_mdc.commands import INPUT_SOURCE, MUTE, POWER
@@ -12,17 +13,21 @@ from samsung_mdc.exceptions import (
 )
 
 from homeassistant import config_entries
+from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.config_entries import ConfigEntry
 from homeassistant.components.media_player import (
     MediaPlayerEntity,
     MediaPlayerDeviceClass,
 )
 from homeassistant.components.media_player.const import (
     MediaPlayerEntityFeature,
+    MediaPlayerState,
 )
 from homeassistant.const import (
     CONF_IP_ADDRESS,
     CONF_NAME,
     CONF_TYPE,
+    CONF_MODEL,
     CONF_UNIQUE_ID,
     STATE_OFF,
     STATE_ON,
@@ -66,19 +71,22 @@ from .const import (
     SOURCE_WIDI_SCREEN_MIRRORING,
 )
 
+from .base_entity import SamsungMDCBaseEntity
+from .coordinator import MDCUpdateCoordinator
+
 _LOGGER = logging.getLogger(__name__)
 
-SUPPORT_MDC = (
-    MediaPlayerEntityFeature.SELECT_SOURCE
-    | MediaPlayerEntityFeature.VOLUME_SET
-    | MediaPlayerEntityFeature.VOLUME_MUTE
-    | MediaPlayerEntityFeature.TURN_OFF
-    | MediaPlayerEntityFeature.TURN_ON
-    | MediaPlayerEntityFeature.VOLUME_STEP
+# Connection retry settings (per Samsung MDC documentation)
+MAX_RETRY_ATTEMPTS = 3
+RETRY_DELAY = 2  # Samsung spec: retry every 2 seconds
+POWER_ON_SOCKET_RECONNECT_TIME = (
+    10  # Samsung spec: must re-connect socket after 10 sec for power on
 )
+POWER_ON_CHECK_INTERVAL = 3  # Check every 3 seconds after socket reconnect
+MAX_POWER_ON_CHECKS = 10  # Try for up to 30 more seconds (10 * 3)
 
 # Map the input sources of the MDC protocol to names for Home Assistant
-SOURCE_MAP = {
+ENUM_TO_NAME = {
     INPUT_SOURCE.INPUT_SOURCE_STATE.NONE: SOURCE_NONE,
     INPUT_SOURCE.INPUT_SOURCE_STATE.S_VIDEO: SOURCE_S_VIDEO,
     INPUT_SOURCE.INPUT_SOURCE_STATE.COMPONENT: SOURCE_COMPONENT,
@@ -111,245 +119,136 @@ SOURCE_MAP = {
     INPUT_SOURCE.INPUT_SOURCE_STATE.URL_LAUNCHER: SOURCE_URL_LAUNCHER,
     INPUT_SOURCE.INPUT_SOURCE_STATE.IWB: SOURCE_IWB,
 }
+NAME_TO_ENUM = {v: k for k, v in ENUM_TO_NAME.items()}
 
 
 async def async_setup_entry(
-    hass: HomeAssistant,
-    config_entry: config_entries.ConfigEntry,
-    async_add_entities,
+    hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback
 ):
-    """Set up media player from a config entry created in the integrations UI."""
-    config = hass.data[DOMAIN][config_entry.entry_id]
-    name = config[CONF_NAME]
-    serial = config[CONF_UNIQUE_ID]
-    model_type = config[CONF_TYPE]
-    display_id = config[CONF_DISPLAY_ID]
+    """Set up the Samsung MDC media player from a config entry.
 
-    mdc = MDC(config[CONF_IP_ADDRESS])
-    media_player = SamsungMDCDisplay(mdc, name, serial, model_type, display_id)
+    Args:
+        hass: The Home Assistant instance.
+        entry: The configuration entry for this integration.
+        async_add_entities: Callback to add entities to Home Assistant.
+    """
+    data = hass.data[DOMAIN][entry.entry_id]
+    coordinator: MDCUpdateCoordinator = data["coordinator"]
+    device_unique_id = data["unique_base"]
+    device_model = entry.data.get(CONF_MODEL, "Unknown")
 
-    async_add_entities([media_player], update_before_add=True)
+    unique_id = f"{device_unique_id}-media_player"
+
+    async_add_entities(
+        [
+            SamsungMDCMediaPlayer(
+                coordinator,
+                name=None,
+                model=device_model,
+                unique_id=unique_id,
+                device_unique_id=device_unique_id,
+            )
+        ],
+        True,
+    )
 
 
-class SamsungMDCDisplay(MediaPlayerEntity):
+class SamsungMDCMediaPlayer(SamsungMDCBaseEntity, MediaPlayerEntity):
     """Samsung MDC screen represented as a media_player."""
 
     _attr_device_class = MediaPlayerDeviceClass.TV
     _attr_icon = "mdi:television"
+    _attr_supported_features = (
+        MediaPlayerEntityFeature.SELECT_SOURCE
+        | MediaPlayerEntityFeature.VOLUME_SET
+        | MediaPlayerEntityFeature.VOLUME_MUTE
+        | MediaPlayerEntityFeature.TURN_OFF
+        | MediaPlayerEntityFeature.TURN_ON
+        | MediaPlayerEntityFeature.VOLUME_STEP
+    )
 
-    def __init__(
-        self, mdc: MDC, conf_name: str, serial: str, model_type: str, display_id: int
-    ) -> None:
-        """Initialize a new instance of SamsungMDCDisplay class."""
-        super().__init__()
-        self.conf_name = conf_name
-        self.mdc = mdc
-        self.serial = serial
-        self.model_type = model_type
-        self.display_id = display_id
-
-        self._is_awaiting_power_on = False
-        self._power = False
-        self._volume = None
-        self._muted = False
-        self._input_source = None
-        self._available = True
-        self._sw_version = None
-
+    # ----- State mapping from coordinator cache -----
     @property
-    def device_info(self):
-        """Return device properties for MDC display."""
-        return {
-            "identifiers": {(DOMAIN, self.unique_id)},
-            "name": self.conf_name,
-            "manufacturer": "Samsung",
-            "model": self.model_type,
-            "sw_version": self._sw_version,
-        }
+    def state(self):
+        """Return the current power state of the display.
 
-    @property
-    def unique_id(self) -> str:
-        """Return the unique ID of the display."""
-        return self.serial
-
-    @property
-    def name(self):
-        """Name of the entity."""
-        return self.conf_name
-
-    @property
-    def volume_level(self):
-        """Volume level of the media player (0..1)."""
-        if self._volume is None:
+        Returns
+        -------
+        MediaPlayerState
+            MediaPlayerState.ON if powered on, MediaPlayerState.OFF if powered off, or None if unavailable.
+        """
+        data = self.coordinator.data or {}
+        if not data:
             return None
-        return self._volume / 100.0
+
+        return (
+            MediaPlayerState.ON
+            if self.coordinator.effective_power_state
+            else MediaPlayerState.OFF
+        )
 
     @property
-    def is_volume_muted(self):
-        """Boolean if volume is currently muted."""
-        return self._muted
+    def is_volume_muted(self) -> bool | None:
+        """Return True if the display volume is muted, False if not, or None if unavailable."""
+        data = self.coordinator.data or {}
+        return data.get("muted")
 
     @property
-    def supported_features(self):
-        """Flag media player features that are supported."""
-        return SUPPORT_MDC
-
-    @property
-    def is_on(self):
-        """If the display is currently on or off."""
-        return self._power
+    def volume_level(self) -> float | None:
+        """Return the current volume level as a float between 0.0 and 1.0, or None if unavailable."""
+        data = self.coordinator.data or {}
+        vol = data.get("volume")
+        if vol is None:
+            return None
+        # Normalize to 0.0-1.0 (adapt to your device’s range)
+        return max(0.0, min(1.0, vol / 100.0))
 
     @property
     def source_list(self):
-        """List of the available input sources."""
-        return list(SOURCE_MAP.values())
+        """Return the list of available input sources for the display."""
+        return list(ENUM_TO_NAME.values())
 
     @property
     def source(self):
-        """Return the name of the active input source."""
-        if self._input_source is None:
-            return None
-        return SOURCE_MAP[self._input_source]
+        """Return the current input source of the display."""
+        data = self.coordinator.data or {}
+        src_enum = data.get("input")
+        return ENUM_TO_NAME.get(src_enum, SOURCE_NONE)
 
-    @property
-    def state(self):
-        """Return the state of the display."""
-        if not self.available:
-            return STATE_UNAVAILABLE
+    # ----- Commands delegate to coordinator (which handles retries) -----
+    async def async_turn_on(self) -> None:
+        """Turn on the Samsung MDC display."""
+        await self.coordinator.async_power_on()
 
-        if self._power:
-            return STATE_ON
-        else:
-            return STATE_OFF
+    async def async_turn_off(self) -> None:
+        """Turn off the Samsung MDC display."""
+        await self.coordinator.async_power_off()
 
-    @property
-    def assumed_state(self) -> bool:
-        """If the state is currently assumed or not."""
-        if self._is_awaiting_power_on:
-            return True
+    async def async_set_volume_level(self, volume: float) -> None:
+        """Set the display volume level.
 
-        return False
+        Args:
+            volume: The desired volume level as a float between 0.0 and 1.0.
+        """
+        # Convert 0.0-1.0 back to device scale
+        val = round(volume * 100)
+        await self.coordinator.async_execute("volume", args=[val])
 
-    async def async_update_sw_version(self):
-        """Retrieve the software version of the display."""
-        # Only update the SW version if the display is turned on, otherwise it will NAK
-        if self._power:
-            try:
-                self._sw_version = await self.mdc.software_version(self.display_id)
-            except NAKError:
-                # Display in a state where it can not report the SW version (possibly powering on)
-                pass
+    async def async_mute_volume(self, mute: bool) -> None:
+        """Mute or unmute the display volume.
 
-    async def async_update(self):
-        """Update the state of the MDC display."""
-        if self._is_awaiting_power_on:
-            # Display is still turning on
-            # Samsung describes a 15 second wait before reconnecting...
-            return
+        Args:
+            mute: True to mute, False to unmute.
+        """
+        await self.coordinator.async_execute("mute", args=[mute])
 
-        try:
-            status = await self.mdc.status(self.display_id)
-            await self.async_update_sw_version()
-        except ValueError:
-            # Some unknown value is passed to the MDC library, ignore
-            # Possibly switching sources which gives undefined POWER and SOURCE state
-            return
-        except MDCResponseError:
-            _LOGGER.warning("MDC response parsing error. Resetting connection.")
-            await self.mdc.close()
-            return
-        except NAKError:
-            _LOGGER.error("Received NAK from display for status command")
-            self._available = False
-            await self.mdc.close()
-            return
-        except (MDCTimeoutError, ConnectionAbortedError, ConnectionRefusedError):
-            _LOGGER.error("Connection error to Samsung MDC display!")
-            self._available = False
-            await self.mdc.close()
-            return
+    async def async_select_source(self, source: str) -> None:
+        """Select the input source for the display.
 
-        # We have received status data, so that must mean we are online!
-        self._available = True
+        Args:
+            source: The name of the input source to select.
 
-        (power_state, volume_level, mute_state, input_state, _, _, _) = status
-
-        if power_state == POWER.POWER_STATE.ON:
-            self._power = True
-        elif power_state == POWER.POWER_STATE.OFF:
-            self._power = False
-        elif power_state == POWER.POWER_STATE.REBOOT:
-            self._power = False
-
-        self._volume = volume_level
-
-        if mute_state == MUTE.MUTE_STATE.ON:
-            self._muted = True
-        else:
-            self._muted = False
-
-        self._input_source = input_state
-
-        # Update additional information
-        await self.async_update_sw_version()
-
-    async def async_execute_power(self, power):
-        """Change the display power state."""
-        for i in range(3):
-            try:
-                await self.mdc.power(
-                    self.display_id,
-                    [POWER.POWER_STATE.ON if power else POWER.POWER_STATE.OFF],
-                )
-                # Power command ACK'd, so successful!
-                return
-            except NAKError:
-                # For power commands, need to retry sending the command 3 times
-                # every 2 seconds until ACK'd, otherwise failure
-                _LOGGER.info("MDC power command has not been ACK'd after try %d/3", i)
-                await asyncio.sleep(2)
-                continue
-            except MDCResponseError:
-                # Samsung displays are weird when powering on and might raise an non-issue exception in the parser,
-                # Let's assume the display is now turning on and will not respond (correctly) for the following 15 seconds.
-                continue
-
-        # If the power command is not ACK'd after 3 tries, it should be considered a failure.
-        # We'll set the display offline and retry with a fresh connection next time.
-        _LOGGER.error("MDC power command has not been ACK'd after 3 tries!")
-        self.available = False
-        self.mdc.close()
-
-    async def async_turn_on(self, **kwargs):
-        """Turn the display on."""
-        if not self._power:
-            self._is_awaiting_power_on = True
-            self._power = True
-            await self.async_execute_power(True)
-            await self.mdc.close()  # Force reconnect on next command
-            await asyncio.sleep(15)  # Wait 15 seconds to boot, as described by Samsung
-            self._is_awaiting_power_on = False
-
-    async def async_turn_off(self, **kwargs):
-        """Turn the display off."""
-        return await self.async_execute_power(False)
-
-    async def async_mute_volume(self, mute):
-        """Set the mute state of the display."""
-        return await self.mdc.mute(
-            self.display_id,
-            [MUTE.MUTE_STATE.ON if mute else MUTE.MUTE_STATE.OFF],
-        )
-
-    async def async_set_volume_level(self, volume):
-        """Set the volume level of the display."""
-        vol_pct = round(volume * 100)
-        return await self.mdc.volume(self.display_id, [vol_pct])
-
-    async def async_select_source(self, source):
-        """Set the input source of the display."""
-
-        position = self.source_list.index(source)
-        return await self.mdc.input_source(
-            self.display_id, [list(SOURCE_MAP.keys())[position]]
+        """
+        await self.coordinator.async_execute(
+            "input_source", args=[NAME_TO_ENUM[source]]
         )

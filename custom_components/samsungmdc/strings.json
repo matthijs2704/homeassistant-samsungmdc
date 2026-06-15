@@ -1,28 +1,29 @@
 {
-    "config": {
-        "flow_title": "{device}",
-        "step": {
-            "user": {
-                "description": "Enter your Samsung TV information. If you never connected Home Assistant before you should see a popup on your TV asking for authorization.",
-                "data": {
-                    "ip_address": "[%key:common::config_flow::data::ip%]",
-                    "name": "[%key:common::config_flow::data::name%]",
-                    "display_id": "Display ID"
-                }
-            },
-            "confirm": {
-                "description": "[%key:common::config_flow::description::confirm_setup%]"
-            }
-        },
-        "error": {
-            "invalid_ip": "Invalid IP address",
-            "invalid_displayid": "Invalid display ID",
-            "cannot_connect": "[%key:common::config_flow::error::cannot_connect%]"
-        },
-        "abort": {
-            "unknown": "Unknown error occurred",
-            "cannot_connect": "Unable to connect to the MDC display",
-            "already_configured": "This MDC Display is already configured"
+  "config": {
+    "flow_title": "{device}",
+    "step": {
+      "user": {
+        "description": "Enter your Samsung TV information. If you never connected Home Assistant before you should see a popup on your TV asking for authorization.",
+        "data": {
+          "ip_address": "[%key:common::config_flow::data::ip%]",
+          "name": "[%key:common::config_flow::data::name%]",
+          "display_id": "Display ID"
         }
+      },
+      "confirm": {
+        "description": "[%key:common::config_flow::description::confirm_setup%]"
+      }
+    },
+    "error": {
+      "invalid_ip": "Invalid IP address",
+      "invalid_displayid": "Invalid display ID",
+      "cannot_connect": "[%key:common::config_flow::error::cannot_connect%]",
+      "display_off": "The display is off. Please turn it on and try again."
+    },
+    "abort": {
+      "unknown": "Unknown error occurred",
+      "cannot_connect": "Unable to connect to the MDC display",
+      "already_configured": "This MDC Display is already configured"
     }
+  }
 }
